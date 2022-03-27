@@ -1,30 +1,15 @@
 #include <math.h>
 #include <raylib.h>
+#include <raymath.h>
+#include <rlgl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #define WIDTH 1000
 #define HEIGHT 1000
-#define ROWS 10
-#define COLS 10
 
-const Color translucentWhite = {255, 255, 255, 20};
-int cellWidth = WIDTH / ROWS;
-int cellHeight = HEIGHT / ROWS;
-
-Vector2 screenToCartesian(Vector2 pos) {
-    double cartesianX = pos.x - WIDTH / 2.0f;
-    double cartesianY = HEIGHT / 2.0F - pos.y;
-    Vector2 cartesianCoord = {cartesianX, cartesianY};
-    return cartesianCoord;
-}
-
-Vector2 cartesianToScreen(Vector2 pos) {
-    double screenX = pos.x + WIDTH / 2.0f;
-    double screenY = HEIGHT / 2.0f - pos.y;
-    Vector2 screenCoord = {screenX, screenY};
-    return screenCoord;
-}
+const Color translucentWhite = {255, 255, 255, 50};
+const Color rayHitColor = {255, 0, 0, 50};
 
 typedef struct {
     Vector2 startPos;
@@ -33,7 +18,7 @@ typedef struct {
 
 typedef struct {
     Vector2 pos;
-    Vector2 direction;
+    Vector2 dir;
 } myRay;
 
 typedef struct {
@@ -41,68 +26,99 @@ typedef struct {
     Vector2 point;
 } raycastResult;
 
-void myRayDraw(myRay ray) { DrawLineV(ray.pos, ray.direction, translucentWhite); }
+void myRayDraw(myRay ray, Vector2 point, bool hit) { 
+    double len = sqrtf(WIDTH * WIDTH + HEIGHT * HEIGHT);
+    if (hit) DrawLineV(ray.pos, point, rayHitColor); 
+    else DrawLineV(ray.pos, Vector2Add(ray.pos, Vector2Scale(point, len)), translucentWhite); 
+}
 
 // Line-line intersection (https://en.wikipedia.org/wiki/Line%E2%80%93line_intersection)
 raycastResult raycast(myRay ray, Wall wall) {
-    int x1 = wall.startPos.x; 
+    double len = sqrtf(WIDTH * WIDTH + HEIGHT * HEIGHT);
+    int x1 = wall.startPos.x;
     int y1 = wall.startPos.y; 
     int x2 = wall.endPos.x; 
     int y2 = wall.endPos.y; 
 
     int x3 = ray.pos.x;
     int y3 = ray.pos.y;
-    int x4 = ray.direction.x;
-    int y4 = ray.direction.y;
+    int x4 = ray.dir.x * len;
+    int y4 = ray.dir.y * len;
 
-    double den = (x1 - x2) * (y3 - y4) - (y1 - y1) * (x3 * x4);
+    double denominator = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
 
     raycastResult result;
-    if (den == 0) {
+
+    if (denominator == 0) {
         result.hit = 0;
+        result.point = ray.dir;
         return result;
     }
-    double t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 * x4)) / den;
-    double u = -((x1 - x3) * (y1 - y2) - (y1 - y3) * (x1 * x2)) / den;
+    double t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denominator;
+    double u = ((x1 - x3) * (y1 - y2) - (y1 - y3) * (x1 - x2)) / denominator;
     
-    if (0 > t < 1 && u > 0)
+    if (t > 0 && t < 1 && u < 0) {
         result.hit = true;
-    else
+        result.point.x = x1 + t * (x2 - x1);
+        result.point.y = y1 + t * (y2 - y1);
+        return result;
+    }
+    else {
         result.hit = false;
+        return result;
+    }
 
-    return result;
-}
-bool inBounds(Vector2 pos) {
-    return pos.x >= 0 && pos.x < WIDTH && pos.y >= 0 && pos.y < HEIGHT;
 }
 
 void drawWall(Wall wall) {
-    DrawLineV(wall.startPos, wall.endPos, WHITE);
+    DrawLineV(wall.startPos, wall.endPos, BLUE);
 }
 
-double degreesToRadians(double degree) {
-    return degree * PI / 180;
+Vector2 GetMousePositionInWorld() {
+    Vector2 p = GetMousePosition();
+	p.x -= WIDTH / 2.0f;
+	p.y -= HEIGHT / 2.0f;
+	p.y *= -1;
+
+	return p;
 }
+
 
 int main() {
-    srand(time(0));
+    Vector2 startPos = {0, 200};
+    Vector2 endPos = {300, 200};
+    Wall wall1 = {startPos, endPos};
+    Vector2 startPos2 = {10, 300};
+    Vector2 endPos2 = {-100, 400};
+    Wall wall2 = {startPos2, endPos2};
+    Wall walls[10] = {wall1, wall2};
+
     InitWindow(WIDTH, HEIGHT, "Raycaster");
     SetTargetFPS(60);
-    
-    Vector2 startPos = {200, 300};
-    Vector2 endPos = {400, 500};
-    Wall wall1 = {startPos, endPos};
     while (!WindowShouldClose()) {
         BeginDrawing();
         ClearBackground(BLACK);
-        drawWall(wall1);
+        rlPushMatrix();
+		rlTranslatef(WIDTH / 2.0f, HEIGHT / 2.0f, 0);
+		rlScalef(1, -1, 1);
+		rlDisableBackfaceCulling();
+
+        Vector2 rayPos = GetMousePositionInWorld();
         for (int d = 0; d < 360; d++) {
-            Vector2 rayOrigin = {GetMouseX(), GetMouseY()};
-            rayOrigin = screenToCartesian(rayOrigin);
-            Vector2 rayDirection = {cos(degreesToRadians(d)) * WIDTH, sin(degreesToRadians(d)) * HEIGHT};
-            myRay ray = {cartesianToScreen(rayOrigin), cartesianToScreen(rayDirection)};
-            myRayDraw(ray);
+            Vector2 raydir = {cosf(d * DEG2RAD), sinf(d * DEG2RAD)};
+            myRay ray = {rayPos, raydir};
+            for (int i = 0; i < 10; i++) {
+                raycastResult result = raycast(ray, walls[i]);
+                myRayDraw(ray, result.point, result.hit);
+            }
         }
+        for (int i = 0; i < 10; i++)
+            drawWall(walls[i]);
+
+        rlDrawRenderBatchActive();
+		rlEnableBackfaceCulling();
+		rlPopMatrix();
+        DrawFPS(0, 0);
         EndDrawing();
     }
 }
